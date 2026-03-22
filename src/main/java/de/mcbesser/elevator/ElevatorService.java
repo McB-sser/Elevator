@@ -5,6 +5,7 @@ import org.bukkit.Color;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.Tag;
 import org.bukkit.World;
 import org.bukkit.boss.BarColor;
@@ -275,6 +276,7 @@ public final class ElevatorService {
         targetLocation.setPitch(player.getLocation().getPitch());
 
         player.teleport(targetLocation);
+        targetPlate.getWorld().playSound(targetLocation, Sound.BLOCK_NOTE_BLOCK_CHIME, 0.9F, 1.25F);
         targetPlate.getWorld().spawnParticle(Particle.PORTAL, targetLocation.clone().add(0.0D, 0.6D, 0.0D), 16, 0.2D, 0.35D, 0.2D, 0.01D);
         originPlate.getWorld().spawnParticle(Particle.PORTAL, originPlate.getLocation().add(0.5D, 0.3D, 0.5D), 16, 0.2D, 0.35D, 0.2D, 0.01D);
     }
