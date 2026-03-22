@@ -7,13 +7,21 @@ import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.Tag;
 import org.bukkit.World;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
+import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Vector;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -23,11 +31,14 @@ public final class ElevatorService {
     private static final long TELEPORT_COOLDOWN_MILLIS = 600L;
     private static final int PARTICLE_HORIZONTAL_RADIUS = 8;
     private static final int PARTICLE_VERTICAL_RADIUS = 6;
-    private static final Particle.DustOptions ELEVATOR_ARROW_DUST =
-        new Particle.DustOptions(Color.fromRGB(85, 220, 255), 1.1F);
+    private static final Particle.DustOptions UP_ARROW_DUST =
+        new Particle.DustOptions(Color.fromRGB(144, 255, 144), 0.9F);
+    private static final Particle.DustOptions DOWN_ARROW_DUST =
+        new Particle.DustOptions(Color.fromRGB(255, 64, 64), 0.9F);
 
     private final JavaPlugin plugin;
     private final Map<UUID, Long> lastUseByPlayer = new HashMap<>();
+    private final Map<UUID, BossBar> bossBarsByPlayer = new HashMap<>();
 
     public ElevatorService(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -64,6 +75,22 @@ public final class ElevatorService {
         }, 20L, 10L);
     }
 
+    public void startBossBarTask() {
+        Bukkit.getScheduler().runTaskTimer(plugin, () -> {
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                updateBossBar(player);
+            }
+        }, 20L, 10L);
+    }
+
+    public void shutdown() {
+        for (BossBar bossBar : bossBarsByPlayer.values()) {
+            bossBar.removeAll();
+            bossBar.setVisible(false);
+        }
+        bossBarsByPlayer.clear();
+    }
+
     public boolean tryMove(Player player, Location sourceLocation, Direction direction) {
         if (!canUse(player)) {
             return false;
@@ -79,8 +106,9 @@ public final class ElevatorService {
             return false;
         }
 
+        float yaw = player.getLocation().getYaw();
         teleport(player, currentPlate, targetPlate);
-        showTravelParticle(currentPlate, targetPlate, direction);
+        showTravelParticle(currentPlate, direction, yaw);
         lastUseByPlayer.put(player.getUniqueId(), System.currentTimeMillis());
         return true;
     }
@@ -92,14 +120,18 @@ public final class ElevatorService {
     }
 
     private Block findPlateUnderLocation(Location location) {
-        Block primary = location.clone().subtract(0.0D, 0.15D, 0.0D).getBlock();
-        if (isPressurePlate(primary.getType())) {
-            return primary;
-        }
+        Block[] candidates = new Block[] {
+            location.getBlock(),
+            location.clone().subtract(0.0D, 0.2D, 0.0D).getBlock(),
+            location.clone().subtract(0.0D, 0.5D, 0.0D).getBlock(),
+            location.clone().subtract(0.0D, 1.0D, 0.0D).getBlock(),
+            location.getBlock().getRelative(BlockFace.DOWN)
+        };
 
-        Block fallback = location.clone().subtract(0.0D, 1.0D, 0.0D).getBlock();
-        if (isPressurePlate(fallback.getType())) {
-            return fallback;
+        for (Block candidate : candidates) {
+            if (isPressurePlate(candidate.getType())) {
+                return candidate;
+            }
         }
 
         return null;
@@ -137,16 +169,21 @@ public final class ElevatorService {
     }
 
     private Block findNextFloor(Block originPlate, Direction direction) {
-        World world = originPlate.getWorld();
-        int step = direction == Direction.UP ? 1 : -1;
-        int minY = world.getMinHeight();
-        int maxY = world.getMaxHeight() - 1;
-
-        for (int y = originPlate.getY() + step; y >= minY && y <= maxY; y += step) {
-            Block candidate = world.getBlockAt(originPlate.getX(), y, originPlate.getZ());
-            if (isPressurePlate(candidate.getType()) && hasStandingSpace(candidate)) {
-                return candidate;
+        List<Block> floors = getElevatorFloors(originPlate);
+        for (int index = 0; index < floors.size(); index++) {
+            if (!isSameBlock(floors.get(index), originPlate)) {
+                continue;
             }
+
+            if (direction == Direction.UP && index + 1 < floors.size()) {
+                return floors.get(index + 1);
+            }
+
+            if (direction == Direction.DOWN && index - 1 >= 0) {
+                return floors.get(index - 1);
+            }
+
+            return null;
         }
 
         return null;
@@ -162,6 +199,76 @@ public final class ElevatorService {
         return Tag.PRESSURE_PLATES.isTagged(material);
     }
 
+    private List<Block> getElevatorFloors(Block plate) {
+        World world = plate.getWorld();
+        List<Block> floors = new ArrayList<>();
+
+        for (int y = world.getMinHeight(); y < world.getMaxHeight(); y++) {
+            Block candidate = world.getBlockAt(plate.getX(), y, plate.getZ());
+            if (isPressurePlate(candidate.getType()) && hasStandingSpace(candidate)) {
+                floors.add(candidate);
+            }
+        }
+
+        floors.sort(Comparator.comparingInt(Block::getY));
+        return floors;
+    }
+
+    private void updateBossBar(Player player) {
+        Block plate = findPlateUnderLocation(player.getLocation());
+        if (plate == null || !isValidElevatorPlate(plate)) {
+            hideBossBar(player);
+            return;
+        }
+
+        List<Block> floors = getElevatorFloors(plate);
+        int floorIndex = getFloorIndex(floors, plate);
+        if (floorIndex < 0) {
+            hideBossBar(player);
+            return;
+        }
+
+        BossBar bossBar = bossBarsByPlayer.computeIfAbsent(player.getUniqueId(), ignored -> {
+            BossBar createdBar = Bukkit.createBossBar("", BarColor.YELLOW, BarStyle.SOLID);
+            createdBar.addPlayer(player);
+            return createdBar;
+        });
+
+        bossBar.setTitle(ChatColor.GOLD + "Fahrstuhl erkannt | Etage " + (floorIndex + 1) + " von " + floors.size());
+        bossBar.setStyle(getBarStyle(floors.size()));
+        bossBar.setProgress(Math.max(0.05D, (floorIndex + 1D) / floors.size()));
+        bossBar.setVisible(true);
+        if (!bossBar.getPlayers().contains(player)) {
+            bossBar.addPlayer(player);
+        }
+    }
+
+    private int getFloorIndex(List<Block> floors, Block currentPlate) {
+        for (int index = 0; index < floors.size(); index++) {
+            if (isSameBlock(floors.get(index), currentPlate)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    private boolean isSameBlock(Block first, Block second) {
+        return first.getWorld().equals(second.getWorld())
+            && first.getX() == second.getX()
+            && first.getY() == second.getY()
+            && first.getZ() == second.getZ();
+    }
+
+    private void hideBossBar(Player player) {
+        BossBar bossBar = bossBarsByPlayer.remove(player.getUniqueId());
+        if (bossBar == null) {
+            return;
+        }
+
+        bossBar.removePlayer(player);
+        bossBar.setVisible(false);
+    }
+
     private void teleport(Player player, Block originPlate, Block targetPlate) {
         Location targetLocation = targetPlate.getLocation().add(0.5D, 0.15D, 0.5D);
         targetLocation.setYaw(player.getLocation().getYaw());
@@ -172,13 +279,8 @@ public final class ElevatorService {
         originPlate.getWorld().spawnParticle(Particle.PORTAL, originPlate.getLocation().add(0.5D, 0.3D, 0.5D), 16, 0.2D, 0.35D, 0.2D, 0.01D);
     }
 
-    private void showTravelParticle(Block originPlate, Block targetPlate, Direction direction) {
-        if (direction == Direction.DOWN) {
-            spawnArrow(originPlate.getLocation().add(0.5D, 0.15D, 0.5D), Direction.DOWN);
-            return;
-        }
-
-        spawnArrow(targetPlate.getLocation().add(0.5D, 0.15D, 0.5D), Direction.UP);
+    private void showTravelParticle(Block originPlate, Direction direction, float yaw) {
+        spawnArrow(originPlate.getLocation().add(0.5D, 1.6D, 0.5D), direction, yaw);
     }
 
     private void spawnValidParticle(Block plate) {
@@ -186,34 +288,73 @@ public final class ElevatorService {
         plate.getWorld().spawnParticle(Particle.END_ROD, location, 1, 0.07D, 0.04D, 0.07D, 0.0D);
     }
 
-    private void spawnArrow(Location center, Direction direction) {
+    private void spawnArrow(Location center, Direction direction, float yaw) {
         World world = center.getWorld();
         if (world == null) {
             return;
         }
 
-        double[][] points = direction == Direction.UP
-            ? new double[][] {
-                {0.0D, 0.25D, 0.0D}, {0.0D, 0.45D, 0.0D}, {0.0D, 0.65D, 0.0D},
-                {-0.12D, 0.55D, 0.0D}, {0.12D, 0.55D, 0.0D}, {-0.08D, 0.72D, 0.0D}, {0.08D, 0.72D, 0.0D}
-            }
-            : new double[][] {
-                {0.0D, 0.65D, 0.0D}, {0.0D, 0.45D, 0.0D}, {0.0D, 0.25D, 0.0D},
-                {-0.12D, 0.35D, 0.0D}, {0.12D, 0.35D, 0.0D}, {-0.08D, 0.18D, 0.0D}, {0.08D, 0.18D, 0.0D}
-            };
+        Vector forward = getHorizontalForward(yaw);
+        Vector right = new Vector(-forward.getZ(), 0.0D, forward.getX()).normalize();
+        Particle.DustOptions dust = direction == Direction.UP ? UP_ARROW_DUST : DOWN_ARROW_DUST;
+        if (direction == Direction.UP) {
+            Location shaftStart = offset(center, right, 0.0D, -1.00D);
+            Location shaftEnd = offset(center, right, 0.0D, 0.65D);
+            Location leftWing = offset(center, right, -0.50D, 0.20D);
+            Location rightWing = offset(center, right, 0.50D, 0.20D);
 
-        for (double[] point : points) {
-            world.spawnParticle(
-                Particle.DUST,
-                center.clone().add(point[0], point[1], point[2]),
-                1,
-                0.0D,
-                0.0D,
-                0.0D,
-                0.0D,
-                ELEVATOR_ARROW_DUST
-            );
+            drawParticleLine(world, shaftStart, shaftEnd, dust, 16);
+            drawParticleLine(world, shaftEnd, leftWing, dust, 8);
+            drawParticleLine(world, shaftEnd, rightWing, dust, 8);
+            return;
         }
+
+        Location shaftStart = offset(center, right, 0.0D, 0.65D);
+        Location shaftEnd = offset(center, right, 0.0D, -1.00D);
+        Location leftWing = offset(center, right, -0.50D, -0.55D);
+        Location rightWing = offset(center, right, 0.50D, -0.55D);
+
+        drawParticleLine(world, shaftStart, shaftEnd, dust, 16);
+        drawParticleLine(world, shaftEnd, leftWing, dust, 8);
+        drawParticleLine(world, shaftEnd, rightWing, dust, 8);
+    }
+
+    private void drawParticleLine(World world, Location from, Location to, Particle.DustOptions dust, int steps) {
+        for (int step = 0; step <= steps; step++) {
+            double progress = step / (double) steps;
+            Location point = from.clone().add(
+                (to.getX() - from.getX()) * progress,
+                (to.getY() - from.getY()) * progress,
+                (to.getZ() - from.getZ()) * progress
+            );
+
+            world.spawnParticle(Particle.DUST, point, 1, 0.0D, 0.0D, 0.0D, 0.0D, dust);
+        }
+    }
+
+    private BarStyle getBarStyle(int floorCount) {
+        if (floorCount == 6) {
+            return BarStyle.SEGMENTED_6;
+        }
+        if (floorCount == 10) {
+            return BarStyle.SEGMENTED_10;
+        }
+        if (floorCount == 12) {
+            return BarStyle.SEGMENTED_12;
+        }
+        if (floorCount == 20) {
+            return BarStyle.SEGMENTED_20;
+        }
+        return BarStyle.SOLID;
+    }
+
+    private Vector getHorizontalForward(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0.0D, Math.cos(radians)).normalize();
+    }
+
+    private Location offset(Location base, Vector right, double rightAmount, double yAmount) {
+        return base.clone().add(right.clone().multiply(rightAmount)).add(0.0D, yAmount, 0.0D);
     }
 
     public enum Direction {
