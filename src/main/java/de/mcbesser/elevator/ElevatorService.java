@@ -234,7 +234,7 @@ public final class ElevatorService {
             return createdBar;
         });
 
-        bossBar.setTitle(ChatColor.GOLD + "Fahrstuhl erkannt | Etage " + (floorIndex + 1) + " von " + floors.size());
+        bossBar.setTitle(ChatColor.GOLD + "Fahrstuhl | Etage " + (floorIndex + 1) + " von " + floors.size());
         bossBar.setStyle(getBarStyle(floors.size()));
         bossBar.setProgress(Math.max(0.05D, (floorIndex + 1D) / floors.size()));
         bossBar.setVisible(true);
