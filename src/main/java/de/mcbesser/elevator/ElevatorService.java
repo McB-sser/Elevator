@@ -32,7 +32,7 @@ public final class ElevatorService {
     private static final int PARTICLE_HORIZONTAL_RADIUS = 8;
     private static final int PARTICLE_VERTICAL_RADIUS = 6;
     private static final Particle.DustOptions UP_ARROW_DUST =
-        new Particle.DustOptions(Color.fromRGB(144, 255, 144), 0.9F);
+        new Particle.DustOptions(Color.fromRGB(64, 255, 96), 0.9F);
     private static final Particle.DustOptions DOWN_ARROW_DUST =
         new Particle.DustOptions(Color.fromRGB(255, 64, 64), 0.9F);
 
