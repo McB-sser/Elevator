@@ -1,6 +1,6 @@
-name: Elevator
+﻿name: Elevator
 version: 1.0.0
 main: de.mcbesser.elevator.ElevatorPlugin
 api-version: '1.21'
 author: McB_sser
-description: Ein Minecraft Elevator Plugin mit vertikalen Druckplatten-Fahrstuehlen.
+description: Ein Minecraft Elevator Plugin mit vertikalen Druckplatten-Fahrst\u00fchlen.
