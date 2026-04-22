@@ -32,6 +32,7 @@ public final class ElevatorService {
     private static final long TELEPORT_COOLDOWN_MILLIS = 600L;
     private static final int PARTICLE_HORIZONTAL_RADIUS = 8;
     private static final int PARTICLE_VERTICAL_RADIUS = 6;
+    private static final long PLATE_VALIDITY_CACHE_MILLIS = 5000L;
     private static final Particle.DustOptions UP_ARROW_DUST =
         new Particle.DustOptions(Color.fromRGB(64, 255, 96), 0.9F);
     private static final Particle.DustOptions DOWN_ARROW_DUST =
@@ -40,6 +41,7 @@ public final class ElevatorService {
     private final JavaPlugin plugin;
     private final Map<UUID, Long> lastUseByPlayer = new HashMap<>();
     private final Map<UUID, BossBar> bossBarsByPlayer = new HashMap<>();
+    private final Map<PlateKey, CachedPlateValidity> plateValidityCache = new HashMap<>();
 
     public ElevatorService(JavaPlugin plugin) {
         this.plugin = plugin;
@@ -61,7 +63,7 @@ public final class ElevatorService {
 
                         for (int z = center.getZ() - PARTICLE_HORIZONTAL_RADIUS; z <= center.getZ() + PARTICLE_HORIZONTAL_RADIUS; z++) {
                             Block block = world.getBlockAt(x, y, z);
-                            if (!isValidElevatorPlate(block)) {
+                            if (!isValidElevatorPlateCached(block)) {
                                 continue;
                             }
 
@@ -73,7 +75,7 @@ public final class ElevatorService {
                     }
                 }
             }
-        }, 20L, 10L);
+        }, 20L, 20L);
     }
 
     public void startBossBarTask() {
@@ -81,7 +83,7 @@ public final class ElevatorService {
             for (Player player : Bukkit.getOnlinePlayers()) {
                 updateBossBar(player);
             }
-        }, 20L, 10L);
+        }, 30L, 20L);
     }
 
     public void shutdown() {
@@ -90,6 +92,7 @@ public final class ElevatorService {
             bossBar.setVisible(false);
         }
         bossBarsByPlayer.clear();
+        plateValidityCache.clear();
     }
 
     public boolean tryMove(Player player, Location sourceLocation, Direction direction) {
@@ -148,6 +151,23 @@ public final class ElevatorService {
         }
 
         return hasMatchingFloor(block);
+    }
+
+    private boolean isValidElevatorPlateCached(Block block) {
+        if (!isPressurePlate(block.getType())) {
+            return false;
+        }
+
+        PlateKey key = new PlateKey(block.getWorld().getUID(), block.getX(), block.getY(), block.getZ());
+        long now = System.currentTimeMillis();
+        CachedPlateValidity cached = plateValidityCache.get(key);
+        if (cached != null && now - cached.checkedAtMillis() <= PLATE_VALIDITY_CACHE_MILLIS) {
+            return cached.valid();
+        }
+
+        boolean valid = isValidElevatorPlate(block);
+        plateValidityCache.put(key, new CachedPlateValidity(valid, now));
+        return valid;
     }
 
     private boolean hasMatchingFloor(Block originPlate) {
@@ -365,5 +385,8 @@ public final class ElevatorService {
     }
 
     private record PlateKey(UUID worldId, int x, int y, int z) {
+    }
+
+    private record CachedPlateValidity(boolean valid, long checkedAtMillis) {
     }
 }
