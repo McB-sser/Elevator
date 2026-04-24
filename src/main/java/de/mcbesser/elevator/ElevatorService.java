@@ -83,7 +83,7 @@ public final class ElevatorService {
             for (Player player : Bukkit.getOnlinePlayers()) {
                 updateBossBar(player);
             }
-        }, 30L, 20L);
+        }, 2L, 4L);
     }
 
     public void shutdown() {
@@ -114,6 +114,7 @@ public final class ElevatorService {
         teleport(player, currentPlate, targetPlate);
         showTravelParticle(currentPlate, direction, yaw);
         lastUseByPlayer.put(player.getUniqueId(), System.currentTimeMillis());
+        updateBossBar(player);
         return true;
     }
 
